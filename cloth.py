@@ -100,12 +100,12 @@ class Cloth:
         self.randint = RandomIntPool(0, 4)
         self.rand = RandomPool()
         self.randn = RandomNormalPool()
-        self.perturbations = {
-            0: lambda: (self.randn() * self.sig, 0, 0),
-            1: lambda: (0, self.randn() * self.sig, 0),
-            2: lambda: (0, 0, self.randn() * 2 * self.sig),
-            3: lambda: (0, 0, self.randn() * 2 * self.sig),
-        }
+        self.perturbations = [
+            lambda: (self.randn() * self.sig, 0, 0),
+            lambda: (0, self.randn() * self.sig, 0),
+            lambda: (0, 0, self.randn() * 2 * self.sig),
+            lambda: (0, 0, self.randn() * 2 * self.sig),
+        ]
         self.corners = frozenset(
             [
                 (0, 0),
