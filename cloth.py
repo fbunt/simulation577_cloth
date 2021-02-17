@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from collections import deque
 from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -14,7 +15,7 @@ class RandomPointPool:
         self.hi = hi
         self.dim = dim
         self.irand = 0
-        self.nrand = 1024 * 100
+        self.nrand = 1024 * 10
         self.shape = (self.nrand, self.dim)
         self.vals = np.random.randint(self.low, self.hi, size=self.shape)
 
@@ -75,7 +76,7 @@ class RandomNormalPool:
 
 
 class Cloth:
-    def __init__(self, L, kT, k, m, l, sig):
+    def __init__(self, L, kT, k, m, l, sig, eq_tol, g=CONST_G):
         self.L = L
         self.N = L * L
         self.kT = kT
@@ -83,6 +84,7 @@ class Cloth:
         self.m = m
         self.l = l
         self.sig = sig
+        self.g = g
 
         self.lattice = np.zeros((L, L, 3))
         x, y = np.meshgrid(range(self.L), range(self.L))
@@ -92,6 +94,15 @@ class Cloth:
         self.E = 0
         self.evec = []
         self.mcs = 0
+        self.equeilibrium = False
+
+        self.eq_tol = eq_tol
+        en = 500
+        self.enq = deque(np.zeros(en), maxlen=en)
+        self.fracn = en // 5
+        self.leftq = deque(np.zeros(self.fracn), maxlen=self.fracn)
+        self.rightq = deque(np.zeros(self.fracn), maxlen=self.fracn)
+        self.frac = np.inf
 
         nx = [1, -1, 0, 0]
         ny = [0, 0, 1, -1]
@@ -114,6 +125,7 @@ class Cloth:
                 (self.L - 1, self.L - 1),
             ]
         )
+        # Store points outside of lattice in a set() to check neighbors against
         outside = set()
         for i in [-1, self.L]:
             for j in range(0, self.L):
@@ -122,6 +134,8 @@ class Cloth:
             for i in range(0, self.L):
                 outside.add((i, j))
         self.outside = frozenset(outside)
+        # mask used to filter invalid neighbor points in get_delta()
+        self.mask = np.zeros(4, dtype=bool)
 
     def step(self):
         for i in range(self.N):
@@ -134,11 +148,15 @@ class Cloth:
                 self.E += dE
         self.evec.append(self.E)
         self.mcs += 1
+        self.check_eq()
 
     def get_delta(self, pt, dr):
         nn = self.dirs + pt
-        mask = [tuple(n) not in self.outside for n in nn]
-        nn = nn[mask]
+        self.mask[0] = tuple(nn[0]) not in self.outside
+        self.mask[1] = tuple(nn[1]) not in self.outside
+        self.mask[2] = tuple(nn[2]) not in self.outside
+        self.mask[3] = tuple(nn[3]) not in self.outside
+        nn = nn[self.mask]
         delta = 0
         # Unperturbed r
         r = self.lattice[pt]
@@ -150,7 +168,8 @@ class Cloth:
             tmp *= tmp
             # Manual sum gives a large (20%) speedup. This is likely because
             # the overhead of np.sum is large compared to summing a vec with
-            # size 3.
+            # size 3. This is used instead of np.linalg.norm because norm is
+            # even slower.
             dp = np.sqrt(tmp[0] + tmp[1] + tmp[2])
             tmp = r - rn
             tmp *= tmp
@@ -159,7 +178,7 @@ class Cloth:
             unperturbed = d - self.l
             delta += (perturbed * perturbed) - (unperturbed * unperturbed)
         delta *= 0.5 * self.k
-        delta += self.m * CONST_G * dr[-1]
+        delta += self.m * self.g * dr[-1]
         return delta
 
     def get_perturbation_no_branch(self):
@@ -180,9 +199,21 @@ class Cloth:
         return (dx, dy, dz)
 
     def perturb(self, pt):
-        dr = self.get_perturbation_no_branch()
+        # dr = self.get_perturbation_no_branch()
+        dr = self.get_perturbation()
         dE = self.get_delta(pt, dr)
         return dr, dE
+
+    def check_eq(self):
+        self.enq.append(self.E)
+        self.leftq.append(self.enq[self.fracn - 1])
+        self.rightq.append(self.E)
+        left = np.mean(self.leftq)
+        right = np.mean(self.rightq)
+        mean = np.mean(self.enq)
+        frac = np.abs((left - right) / mean)
+        self.frac = frac
+        self.equeilibrium = frac <= self.eq_tol
 
 
 def run_sim(sim, max_iter):
@@ -211,6 +242,7 @@ if __name__ == "__main__":
     m = 0.04
     sigma = 0.25 * l
     kT = 1e-3
-    sim = Cloth(L, kT, k, m, l, sigma)
+    g = 9.81
+    sim = Cloth(L, kT, k, m, l, sigma, 0.005, g)
     run_sim(sim, 20_000)
     plot_cloth(sim)
